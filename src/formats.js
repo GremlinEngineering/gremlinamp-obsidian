@@ -7,6 +7,9 @@ const playerExtensions = [...new Set([...Object.values(DECODERS).flat(), ...extr
 const trackerFormats = new Set(['mod', 'xm', 'it', 's3m', 'mtm', 'stm']);
 const mediaFormats = new Set(['aac', 'oga']);
 const banks = {kss: 'mbk', kssx: 'mbk', kscc: 'mbk'};
+const capsuleRates = {st: 31400, iv: 44100, gbc: 32768, gba: 32768, jaguar: 48000,
+    md: 44100, sv: 44100, vx: 187500, ws: 44100};
+const boardTrackCounts = {enson: 256, f3: 512, bsmt: 256, astro: 256, ki: 13, model2: 256};
 
 function routeFile(extension, buffer) {
     const bytes = new Uint8Array(buffer);
@@ -34,12 +37,70 @@ function trackSelection(extension, buffer, route) {
         const first = bytes[7] - 1;
         return {first: 0, count, selected: first >= 0 && first < count ? first : 0};
     }
+    if (extension === 'nsfe') return nsfeSelection(bytes, view);
+    if (extension === 'gbs' && bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x42 && bytes[2] === 0x53) {
+        const count = Math.max(1, bytes[4]);
+        return {first: 0, count, selected: Math.max(0, Math.min(count - 1, bytes[5] - 1))};
+    }
+    if (extension === 'hes' && bytes.length >= 6) return {first: 0, count: 256, selected: bytes[5]};
+    if (extension === 'ay' && bytes.length >= 18) {
+        const count = bytes[16] + 1;
+        return {first: 0, count, selected: Math.min(count - 1, bytes[17])};
+    }
     if (extension === 'wsr' && bytes.length >= 32)
         return {first: 0, count: 256, selected: bytes[bytes.length - 27]};
+    if (Object.hasOwn(capsuleRates, route.id) && bytes.length >= 128) {
+        const count = view.getUint32(24, true);
+        if (count > 0 && count <= 64 && view.getUint32(36, true) === 128 + count * 64) {
+            const rate = capsuleRates[route.id];
+            const durations = Array.from({length: count}, (_, index) => {
+                const offset = 128 + index * 64 + 28;
+                return offset + 4 <= bytes.length ? view.getUint32(offset, true) / rate : null;
+            });
+            return {first: 0, count, selected: 0, durations};
+        }
+    }
+    if (['a5', 'nf', 'dcs'].includes(route.id) && bytes.length >= 16) {
+        const length = view.getUint32(4, true);
+        if (length && length <= 65536 && length + 16 <= bytes.length) {
+            const data = JSON.parse(new TextDecoder().decode(bytes.subarray(16, 16 + length)));
+            if (Array.isArray(data.tracks) && data.tracks.length && data.tracks.length <= 64) {
+                const rate = route.id === 'dcs' ? 31250 : data.source_rate;
+                return {first: 0, count: data.tracks.length, selected: 0,
+                    names: data.tracks.map(track => typeof track.title === 'string' ? track.title : ''),
+                    durations: data.tracks.map(track => rate > 0 ? track.audio_frames / rate : null)};
+            }
+        }
+    }
+    if (Object.hasOwn(boardTrackCounts, route.id))
+        return {first: 0, count: null, selected: 0, max: boardTrackCounts[route.id]};
     if (trackerFormats.has(extension) && route.id === 'broad') return {first: 0, count: 1, selected: 0};
-    if (route.id === 'psf2' || route.id === 'gsf' || psfFamily.has(extension))
+    if (psfFamily.has(extension) || ['libvgm', 'atari'].includes(route.id) ||
+        ['gym', 'spc'].includes(extension) || !['gme', 'gme-plus', 'broad'].includes(route.id))
         return {first: 0, count: 1, selected: 0};
     return {first: 0, count: null, selected: 0};
+}
+
+function nsfeSelection(bytes, view) {
+    let count = 1, selected = 0;
+    let names, durations;
+    const decoder = new TextDecoder();
+    for (let offset = 4; offset + 8 <= bytes.length;) {
+        const length = view.getUint32(offset, true);
+        const tag = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+        const start = offset + 8;
+        offset = start + length;
+        if (offset > bytes.length || tag === 'NEND') break;
+        if (tag === 'INFO' && length >= 8) {
+            count = length >= 9 ? Math.max(1, bytes[start + 8]) : 1;
+            selected = length >= 10 ? Math.min(count - 1, bytes[start + 9]) : 0;
+        }
+        if (tag === 'tlbl') names = decoder.decode(bytes.subarray(start, Math.min(start + 65536, offset))).split('\0');
+        if (tag === 'time') durations = Array.from({length: Math.min(256, Math.floor(length / 4))}, (_, index) =>
+            view.getInt32(start + index * 4, true) / 1000);
+    }
+    // The bundled GME worker clears the optional NSFE playlist.
+    return {first: 0, count, selected, names, durations};
 }
 
 function psfTags(buffer) {
@@ -58,16 +119,16 @@ function psfTags(buffer) {
 }
 
 function referencedPath(parent, name) {
-    if (/^[/\\]|[:|\u0000-\u001f]/.test(name)) throw Error('Недопустимый путь библиотеки: ' + name);
+    if (/^[/\\]|[:|\u0000-\u001f]/.test(name)) throw new PlayerError('invalidLibrary', name);
     const path = parent.split('/').slice(0, -1);
     for (const component of name.split(/[/\\]/)) {
         if (!component || component === '.') continue;
         if (component === '..') {
-            if (!path.length) throw Error('Библиотека находится за пределами хранилища: ' + name);
+            if (!path.length) throw new PlayerError('invalidLibrary', name);
             path.pop();
         } else path.push(component);
     }
-    if (!path.length) throw Error('Недопустимый путь библиотеки: ' + name);
+    if (!path.length) throw new PlayerError('invalidLibrary', name);
     return path.join('/');
 }
 
@@ -80,7 +141,7 @@ async function loadDependencies(vault, file, extension, bytes) {
             for (const [key, value] of psfTags(input)) {
                 if (!/^_lib(?:[1-9]\d*)?$/.test(key) || !value) continue;
                 const dependencyPath = referencedPath(path, value);
-                if (visiting.has(dependencyPath)) throw Error('Циклическая зависимость PSF: ' + dependencyPath);
+                if (visiting.has(dependencyPath)) throw new PlayerError('invalidLibrary', dependencyPath);
                 if (dependencies.has(dependencyPath)) continue;
                 let dependency = vault.getAbstractFileByPath(dependencyPath);
                 if (!dependency) {
@@ -88,7 +149,7 @@ async function loadDependencies(vault, file, extension, bytes) {
                 }
                 const payload = dependency instanceof TFile ? await vault.readBinary(dependency) :
                     await vault.adapter.readBinary(dependencyPath).catch(() => null);
-                if (!payload) throw Error('Отсутствует библиотека ' + value + ' для ' + path);
+                if (!payload) throw new PlayerError('missingLibrary', value);
                 visiting.add(dependencyPath);
                 dependencies.set(dependencyPath, payload);
                 await collect(dependencyPath, payload);
@@ -113,7 +174,7 @@ function parsePsfDuration(tags) {
     return length > 0 ? length + seconds('fade') : null;
 }
 
-async function unpackStm(viewWindow, buffer) {
+async function unpackCapsule(viewWindow, buffer) {
     const bytes = new Uint8Array(buffer);
     if (bytes[0] !== 31 || bytes[1] !== 139) return buffer;
     const stream = new viewWindow.Blob([buffer]).stream().pipeThrough(new viewWindow.DecompressionStream('gzip'));
@@ -125,7 +186,7 @@ async function unpackStm(viewWindow, buffer) {
             const {value, done} = await reader.read();
             if (done) break;
             size += value.byteLength;
-            if (size > 40_000_000) throw Error('Распакованный STM слишком велик');
+            if (size > 40_000_000) throw Error('Expanded music capsule is too large');
             parts.push(value);
         }
         return await new viewWindow.Blob(parts).arrayBuffer();
@@ -148,5 +209,21 @@ function trackDuration(extension, buffer, route, index) {
         const samples = view.getUint32(offset + 28, true);
         return samples > 0 ? samples / 31400 : null;
     }
+    if (extension === 'spc' && buffer.byteLength >= 0xad && view.getUint8(0x23) === 0x1a) {
+        const text = new TextDecoder().decode(new Uint8Array(buffer, 0xa9, 3)).match(/^\d{1,3}(?=\0|$)/);
+        const seconds = text ? Number(text[0]) : view.getUint16(0xa9, true);
+        return seconds > 0 && seconds < 0x1fff ? seconds : null;
+    }
     return null;
+}
+
+function trackTitle(extension, buffer) {
+    if (psfFamily.has(extension)) return psfTags(buffer).get('title');
+    const fields = {spc: [0x2e, 32], mod: [0, 20], xm: [17, 20], s3m: [0, 28], it: [4, 26]};
+    const field = fields[extension];
+    if (field && buffer.byteLength >= field[0] + field[1]) {
+        const title = new TextDecoder().decode(new Uint8Array(buffer, ...field)).split('\0', 1)[0].trim();
+        if (!title.includes('\ufffd')) return title;
+    }
+    return '';
 }

@@ -41,7 +41,10 @@ async function load(message){
   let discard=Math.round(prefix*Math.round(message.sampleRate)/44100);
   while(discard>0){const frames=Math.min(MAX_FRAMES,discard);runtime._gremlin_vgm_render(output,frames);discard-=frames;}
   const devices=JSON.parse(runtime.UTF8ToString(runtime._gremlin_vgm_devices()));
-  postMessage({type:'ready',decoder:'libvgm',devices,sampleRate:Math.round(message.sampleRate)});
+  const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const duration = bytes.length >= 0x1c && header.getUint32(0) === 0x56676d20
+    ? Math.max(0, header.getUint32(0x18, true) - prefix) / 44100 : null;
+  postMessage({type:'ready',decoder:'libvgm',devices,sampleRate:Math.round(message.sampleRate),duration});
   return true;
 }
 function render(message){

@@ -1,10 +1,10 @@
 # GremlinAmp
 
-An offline player for GremlinAmp's game music formats in Obsidian. Open a track from the file explorer or a normal wiki link such as `[[Music/intro.nsf]]`, then press **Играть**. The file view has play, pause, stop, volume and a subsong selector. Obsidian reads the original file from the vault. The decoder runs in a local Worker.
+An offline player for GremlinAmp's game music formats in Obsidian. Open a track from the file explorer or a normal wiki link such as `[[Music/intro.nsf]]`, then press **Play**. The player inherits the active Obsidian theme. **In file** shows subsongs, and **In folder** lists other supported music files in the same folder. Use the position slider or the 10-second buttons for tracks with a known duration after loading. Choose **English** or **Русский** in the GremlinAmp settings. Obsidian reads the original file from the vault. The decoder runs in a local Worker.
 
 ## Installing
 
-In BRAT, choose **Add beta plugin** and enter the URL of this repository. Choose version `0.1.0` or the latest release. The release contains the standard `main.js`, `manifest.json` and `styles.css` assets. The complete WASM decoder set is embedded in `main.js`.
+In BRAT, choose **Add beta plugin** and enter the URL of this repository. Choose the latest release. The release contains the standard `main.js`, `manifest.json` and `styles.css` assets. The complete WASM decoder set is embedded in `main.js`.
 
 For manual installation, extract the release ZIP in the vault's `.obsidian/plugins` directory and enable **GremlinAmp** in **Community plugins**. The plugin needs no network or separate player after installation.
 
@@ -21,7 +21,7 @@ For manual installation, extract the release ZIP in the vault's `.obsidian/plugi
 | GremlinAmp containers | `a5m`, `a5z`, `acm`, `acz`, `agm`, `agz`, `bms`, `bmz`, `c3m`, `c3z`, `dcm`, `dcz`, `dkm`, `e6m`, `e6z`, `f3m`, `f3z`, `g0m`, `g0z`, `gbm`, `gbz`, `ivm`, `ivz`, `jgm`, `jgz`, `k0m`, `k0z`, `kim`, `kiz`, `lsm`, `lsz`, `m2s`, `m2z`, `mdm`, `mdz`, `mrm`, `nfm`, `nfz`, `ngl`, `ngz`, `nws`, `nwz`, `snes-registers`, `spt`, `spz`, `stm`, `stz`, `svm`, `svz`, `vxm`, `vxz`, `wsm`, `wsz` |
 | Regular audio | `aac` and `oga` through the app's media engine. Formats such as WAV, MP3, OGG, FLAC and M4A open in Obsidian's native player. |
 
-Keep any referenced music libraries such as `.psflib` or `.gsflib` at their original relative paths within the vault. They belong to the track set. When format metadata provides a duration, the player stops at the end. Some emulated formats loop until stopped. Untimed GSF files use a two-minute playback window.
+Keep any referenced music libraries such as `.psflib` or `.gsflib` at their original relative paths within the vault. They belong to the track set. When a duration is available, the player stops at the end. Seeking in some emulated formats can take longer because the decoder has to replay up to the requested point. Some emulated formats loop until stopped. Untimed GSF files use a two-minute playback window.
 
 ## Building
 

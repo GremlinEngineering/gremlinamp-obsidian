@@ -63,9 +63,27 @@ async function load(m){
   targetRate=m.sampleRate;
   if(!Number.isFinite(targetRate)||targetRate<8000||targetRate>192000)throw Error('Недопустимая частота вывода');
   if(m.decoder==='gsf')await loadGSF(m);else if(m.decoder==='broad')await loadBroad(m);else throw Error('Неизвестный декодер');
-  const duration = decoder === 'broad' ? Module._GetTrackLength?.() / sourceRate : m.renderMs / 1000;
-  postMessage({type:'ready',decoder,duration});
+  const duration = decoder === 'broad' ? Module._GetTrackLength?.() / sourceRate : pcm16.length / 2 / sourceRate;
+  const metadata = {type: 'ready', decoder, duration, seek: decoder === 'gsf' || ['mod','xm','it','s3m','mtm','stm'].includes(m.format)};
+  if (['kss','kssx','kscc'].includes(m.format)) {
+    const path = safePath(m.filename);
+    metadata.tracks = Module.ccall('GetKSSTrackCountDirect','number',['string'],[path]);
+  }
+  postMessage(metadata);
   return true;
+}
+function seek(seconds) {
+  if (decoder === 'gsf') {
+    frame = Math.round(seconds * targetRate);
+    seconds = frame / targetRate;
+  } else {
+    const ms = Math.round(seconds * 1000);
+    Module._Seek(Math.floor(ms / 1000), ms % 1000);
+    pending = new Float32Array(0);
+    position = 0;
+    seconds = ms / 1000;
+  }
+  postMessage({type: 'positioned', seconds});
 }
 function pullBroad(frames){
   const output=new Float32Array(frames*2);
@@ -106,4 +124,5 @@ function render(m){
 onmessage=({data:m})=>{
   if(m.type==='load')ready=load(m).catch(e=>{postMessage({type:'error',message:String(e.message||e)});return false;});
   else if(m.type==='render')Promise.resolve(ready).then(ok=>{if(ok)render(m)}).catch(e=>postMessage({type:'error',message:String(e.message||e)}));
+  else if(m.type==='seek')Promise.resolve(ready).then(ok=>{if(ok)seek(m.seconds)}).catch(e=>postMessage({type:'error',message:String(e.message||e)}));
 };

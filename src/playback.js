@@ -2,16 +2,20 @@ const chunkFrames = 4096;
 const queueDepth = 4;
 
 class DecoderPlayback {
-    constructor(viewWindow, onChange) {
+    constructor(viewWindow, onChange, {position = 0, paused = false} = {}) {
         this.window = viewWindow;
         this.onChange = onChange;
         this.state = 'loading';
         this.sources = new Set();
         this.clock = 0;
+        this.target = position;
+        this.startPaused = paused;
         this.context = new viewWindow.AudioContext();
         this.gain = this.context.createGain();
         this.gain.connect(this.context.destination);
-        this.activation = this.context.resume();
+        this.activation = this.context.resume().then(() => {
+            if (this.startPaused && this.state !== 'stopped') return this.context.suspend();
+        });
         // The first decoder response may take some time.
         this.activation.catch(() => {});
     }
@@ -23,22 +27,59 @@ class DecoderPlayback {
             if (this.state === 'stopped') return;
             this.duration = duration;
             this.decoder = startDecoder(this.window, route.worker, decoderAssetsByWorker[route.worker]);
-            this.decoder.worker.onerror = event => this.fail(event.message || 'Не удалось запустить декодер');
+            this.decoder.worker.onerror = event => this.fail(new Error(event.message || 'Worker error'));
             this.decoder.worker.onmessage = ({data}) => {
                 try {
-                    if (data.type === 'error') this.fail(data.message);
-                    if (data.type === 'ready') {
-                        this.metadata = data;
-                        if (Number.isFinite(data.duration) && data.duration > 0) this.duration ??= data.duration;
-                        for (let index = 0; index < queueDepth; ++index) this.request();
-                    }
-                    if (data.type === 'pcm') this.enqueue(data);
-                } catch (error) { this.fail(error.message); }
+                    if (data.type === 'error') this.fail(new Error(data.message));
+                    if (data.type === 'ready') this.ready(data);
+                    if (data.type === 'positioned') this.bufferFrom(Math.round(data.seconds * this.context.sampleRate));
+                    if (data.type === 'pcm') this.receive(data);
+                } catch (error) { this.fail(error); }
             };
-            this.timeout = this.window.setTimeout(() => this.fail('Декодер не ответил вовремя'), 120000);
-            const buffers = [message.bytes, ...message.dependencies.map(file => file.bytes)];
-            this.decoder.worker.postMessage({...message, type: 'load', sampleRate: this.context.sampleRate}, buffers);
-        } catch (error) { this.fail(error.message); }
+            this.timeout = this.window.setTimeout(() => this.fail(new Error('Decoder timed out')), 120000);
+            // Keep the vault buffers available for restarting the decoder at a new position.
+            this.decoder.worker.postMessage({...message, type: 'load', sampleRate: this.context.sampleRate});
+        } catch (error) { this.fail(error); }
+    }
+
+    ready(metadata) {
+        this.metadata = metadata;
+        if (Number.isFinite(metadata.duration) && metadata.duration > 0) this.duration ??= metadata.duration;
+        this.target = Math.min(this.target, this.duration ?? Infinity);
+        if (this.target === 0) {
+            this.bufferFrom(0);
+        } else if (metadata.seek) {
+            this.decoder.worker.postMessage({type: 'seek', seconds: this.target});
+        } else {
+            this.framesToSkip = Math.round(this.target * this.context.sampleRate);
+            this.skip();
+        }
+        this.onChange();
+    }
+
+    skip() {
+        if (this.framesToSkip) {
+            this.decoder.worker.postMessage({type: 'render', frames: Math.min(16384, this.framesToSkip)});
+        } else {
+            this.bufferFrom(Math.round(this.target * this.context.sampleRate));
+        }
+    }
+
+    bufferFrom(frame) {
+        this.clock = frame;
+        for (let index = 0; index < queueDepth; ++index) this.request();
+    }
+
+    receive(message) {
+        if (this.framesToSkip) {
+            const frames = message.pcm.byteLength / (Float32Array.BYTES_PER_ELEMENT * 2);
+            if (!Number.isInteger(frames) || frames <= 0 || frames > this.framesToSkip || message.ended)
+                throw new PlayerError('seekError');
+            this.framesToSkip -= frames;
+            this.skip();
+        } else {
+            this.enqueue(message);
+        }
     }
 
     request() {
@@ -81,7 +122,7 @@ class DecoderPlayback {
         }
         if (this.state === 'loading' && length) {
             this.window.clearTimeout(this.timeout);
-            this.state = 'playing';
+            this.state = this.startPaused ? 'paused' : 'playing';
             this.timer = this.window.setInterval(() => this.onChange(), 200);
             this.onChange();
         }
@@ -90,7 +131,7 @@ class DecoderPlayback {
 
     get seconds() {
         if (this.state === 'ended') return this.clock / this.context.sampleRate;
-        if (!this.spans?.length) return 0;
+        if (!this.spans?.length) return this.target;
         const now = this.context.currentTime;
         while (this.spans.length > 1 && this.spans[1].start <= now) this.spans.shift();
         const span = this.spans[0];
@@ -105,7 +146,7 @@ class DecoderPlayback {
             if (pause) await this.context.suspend();
             else await this.context.resume();
             if (['playing', 'paused'].includes(this.state)) this.state = pause ? 'paused' : 'playing';
-        } catch (error) { this.fail(error.message); }
+        } catch (error) { this.fail(error); }
         finally { this.transition = false; this.onChange(); }
     }
 
@@ -117,9 +158,9 @@ class DecoderPlayback {
         this.onChange();
     }
 
-    fail(message) {
-        if (this.state === 'stopped' || this.state === 'ended') return;
-        this.error = message;
+    fail(error) {
+        if (['stopped', 'ended', 'error'].includes(this.state)) return;
+        this.error = error;
         this.state = 'error';
         this.disposeAudio();
         this.onChange();

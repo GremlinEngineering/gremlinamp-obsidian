@@ -1,36 +1,201 @@
 .gremlinamp-player {
-    padding: var(--size-4-6);
+    color: var(--text-normal);
+    font-family: var(--font-interface);
+    padding: var(--size-4-4);
     max-width: 58rem;
     margin-inline: auto;
 }
 
-.gremlinamp-player h2 {
-    margin-block: 0 var(--size-4-4);
-    overflow-wrap: anywhere;
+.gremlinamp-panel {
+    background-color: var(--background-secondary);
+    border: var(--border-width, 1px) solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-4);
 }
 
-.gremlinamp-controls {
+.gremlinamp-summary,
+.gremlinamp-transport,
+.gremlinamp-actions,
+.gremlinamp-list-heading,
+.gremlinamp-scopes,
+.gremlinamp-track-number,
+.gremlinamp-volume {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--size-4-3);
-}
-
-.gremlinamp-controls label {
-    display: inline-flex;
     align-items: center;
     gap: var(--size-4-2);
 }
 
-.gremlinamp-controls label[hidden] {
+.gremlinamp-transport,
+.gremlinamp-actions,
+.gremlinamp-list-heading,
+.gremlinamp-scopes {
+    flex-wrap: wrap;
+}
+
+.gremlinamp-transport,
+.gremlinamp-list-heading {
+    justify-content: space-between;
+}
+
+.gremlinamp-summary {
+    gap: var(--size-4-3);
+}
+
+.gremlinamp-art {
+    display: grid;
+    place-items: center;
+    inline-size: 3.375rem;
+    block-size: 3.875rem;
+    flex: none;
+    border-radius: var(--radius-s);
+    background-color: var(--background-primary);
+    color: var(--text-accent);
+}
+
+.gremlinamp-now-playing {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+}
+
+.gremlinamp-player h2,
+.gremlinamp-player h3 {
+    margin: 0;
+}
+
+.gremlinamp-status {
+    color: var(--text-accent);
+}
+
+.gremlinamp-status,
+.gremlinamp-file,
+.gremlinamp-row-index,
+.gremlinamp-row-format,
+.gremlinamp-row-time {
+    font-size: var(--font-ui-small);
+}
+
+.gremlinamp-file,
+.gremlinamp-volume,
+.gremlinamp-timeline,
+.gremlinamp-row-index,
+.gremlinamp-row-format,
+.gremlinamp-row-time {
+    color: var(--text-muted);
+}
+
+.gremlinamp-timeline {
+    display: grid;
+    grid-template-columns: minmax(4ch, max-content) minmax(0, 1fr) minmax(4ch, max-content);
+    align-items: center;
+    gap: var(--size-4-2);
+    margin-block: var(--size-4-3) var(--size-4-2);
+}
+
+.gremlinamp-timeline input,
+.gremlinamp-volume input {
+    inline-size: 100%;
+    min-inline-size: 0;
+    margin: 0;
+}
+
+.gremlinamp-timeline span:last-child,
+.gremlinamp-row-time {
+    text-align: end;
+}
+
+.gremlinamp-timeline span,
+.gremlinamp-row-time,
+.gremlinamp-row-index {
+    font-variant-numeric: tabular-nums;
+}
+
+.gremlinamp-actions button {
+    min-inline-size: 2.125rem;
+    padding-inline: var(--size-4-2);
+}
+
+.gremlinamp-actions .gremlinamp-play {
+    min-inline-size: 2.625rem;
+}
+
+.gremlinamp-volume {
+    inline-size: 7rem;
+}
+
+.gremlinamp-tracks {
+    margin-block-start: var(--size-4-4);
+}
+
+.gremlinamp-list-heading {
+    margin-block-end: var(--size-4-2);
+}
+
+.gremlinamp-scopes button[aria-pressed="true"] {
+    background-color: var(--background-modifier-active-hover);
+    color: var(--text-accent);
+}
+
+.gremlinamp-track-number[hidden] {
     display: none;
 }
 
-.gremlinamp-controls input[type="number"] {
-    width: 5rem;
+.gremlinamp-track-number input {
+    inline-size: 5rem;
 }
 
-.gremlinamp-time {
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
+.gremlinamp-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.gremlinamp-list li + li {
+    border-block-start: var(--border-width, 1px) solid var(--background-modifier-border);
+}
+
+.gremlinamp-list button {
+    display: grid;
+    grid-template-columns: minmax(2ch, max-content) minmax(0, 1fr) max-content minmax(4ch, max-content);
+    gap: var(--size-4-2);
+    inline-size: 100%;
+    min-block-size: 2.25rem;
+    block-size: auto;
+    padding: var(--size-4-2);
+    border: 0;
+    border-radius: var(--radius-s);
+    box-shadow: none;
+    background: transparent;
+    text-align: start;
+    white-space: normal;
+}
+
+.gremlinamp-row-title {
+    overflow-wrap: anywhere;
+}
+
+.gremlinamp-row-format {
+    overflow: hidden;
+    max-inline-size: 8ch;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gremlinamp-list button:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.gremlinamp-list button[aria-current="true"] {
+    background-color: var(--background-modifier-active-hover);
+    color: var(--text-accent);
+}
+
+@media (pointer: coarse) {
+    .gremlinamp-player button,
+    .gremlinamp-player input[type="range"] {
+        min-block-size: 2.75rem;
+    }
+
+    .gremlinamp-actions button {
+        min-inline-size: 2.75rem;
+    }
 }
