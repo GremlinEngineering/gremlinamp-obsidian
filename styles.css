@@ -1,0 +1,36 @@
+.gremlinamp-player {
+    padding: var(--size-4-6);
+    max-width: 58rem;
+    margin-inline: auto;
+}
+
+.gremlinamp-player h2 {
+    margin-block: 0 var(--size-4-4);
+    overflow-wrap: anywhere;
+}
+
+.gremlinamp-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--size-4-3);
+}
+
+.gremlinamp-controls label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-4-2);
+}
+
+.gremlinamp-controls label[hidden] {
+    display: none;
+}
+
+.gremlinamp-controls input[type="number"] {
+    width: 5rem;
+}
+
+.gremlinamp-time {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
