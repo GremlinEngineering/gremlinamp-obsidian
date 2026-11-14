@@ -1,37 +1,69 @@
-const {FileView, Notice, Plugin, PluginSettingTab, Setting, TFile, getLanguage, setIcon} = require('obsidian');
+const {FileView, FuzzySuggestModal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder,
+    getLanguage, setIcon, setTooltip} = require('obsidian');
 const viewType = 'gremlinamp-music';
+const libraryViewType = 'gremlinamp-library';
 const defaultSelection = {first: 0, count: 1, selected: 0};
 const byFilename = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
 
+function withinFolder(path, folder) {
+    return folder === '/' || path === folder || path.startsWith(folder + '/');
+}
+
+function isLibraryTrack(file) {
+    if (!(file instanceof TFile)) return false;
+    const extension = file.extension.toLowerCase();
+    return playerExtensions.includes(extension) || mediaFormats.has(extension);
+}
+
 class MusicView extends FileView {
-    constructor(leaf, plugin) {
+    constructor(leaf, plugin, library = false) {
         super(leaf);
         this.plugin = plugin;
-        this.mode = 'file';
+        this.library = library;
+        this.mode = library ? 'library' : 'file';
+        if (library) {
+            this.allowNoFile = true;
+            this.navigation = false;
+        }
     }
 
-    getViewType() { return viewType; }
-    getDisplayText() { return this.currentFile?.name ?? this.file?.name ?? 'GremlinAmp'; }
+    getViewType() { return this.library ? libraryViewType : viewType; }
+    getDisplayText() { return this.library ? 'GremlinAmp' : this.currentFile?.name ?? this.file?.name ?? 'GremlinAmp'; }
     getIcon() { return 'music'; }
     canAcceptExtension(extension) { return playerExtensions.includes(extension.toLowerCase()); }
 
     onload() {
         super.onload();
         const vault = this.plugin.app.vault;
-        this.registerEvent(vault.on('create', file => this.refreshFolder(file)));
-        this.registerEvent(vault.on('delete', file => this.refreshFolder(file)));
-        this.registerEvent(vault.on('rename', () => {
-            if (this.currentFile) {
-                this.update();
-                this.renderTracklist();
-            }
-        }));
+        if (!this.library) {
+            this.registerEvent(vault.on('create', file => this.refreshFolder(file)));
+            this.registerEvent(vault.on('delete', file => this.refreshFolder(file)));
+            this.registerEvent(vault.on('rename', () => {
+                if (this.currentFile) {
+                    this.update();
+                    this.renderTracklist();
+                }
+            }));
+        }
         this.registerEvent(vault.on('modify', file => {
             if (file === this.currentFile) this.preparation = null;
         }));
     }
 
+    async onOpen() {
+        await super.onOpen();
+        if (this.library) this.renderPlayer();
+    }
+
     async onLoadFile(file) {
+        const autoplay = this.pendingFile === file;
+        this.pendingFile = null;
+        this.loadTrack(file);
+        if (autoplay) void this.start();
+        else if (!mediaFormats.has(file.extension.toLowerCase())) void this.prepare(file).catch(() => {});
+    }
+
+    loadTrack(file) {
         this.stop(false);
         this.currentFile = file;
         this.preparation = null;
@@ -39,17 +71,19 @@ class MusicView extends FileView {
         this.selection = defaultSelection;
         this.subsong = 0;
         this.durations = new Map();
-        this.renderPlayer();
-        if (this.pendingFile === file) {
-            this.pendingFile = null;
-            void this.start();
-        } else if (!mediaFormats.has(file.extension.toLowerCase())) {
-            void this.prepare(file).catch(() => {});
+        if (this.library) {
+            this.renderTracklist();
+            this.update();
+        } else {
+            this.renderPlayer();
         }
     }
 
     async onUnloadFile() { this.resetFile(); }
-    async onClose() { this.resetFile(); }
+    async onClose() {
+        this.resetFile();
+        if (this.plugin.active === this) this.plugin.active = null;
+    }
 
     resetFile() {
         this.currentFile = null;
@@ -63,10 +97,22 @@ class MusicView extends FileView {
             this.renderTracklist();
     }
 
+    refreshLibrary() {
+        if (!this.list) return;
+        const file = this.currentFile;
+        if (file && (!isLibraryTrack(file) || this.plugin.app.vault.getAbstractFileByPath(file.path) !== file)) {
+            this.resetFile();
+            this.mode = 'library';
+        }
+        this.renderTracklist();
+        this.update();
+    }
+
     renderPlayer() {
         this.contentEl.empty();
         const root = this.contentEl.createDiv({cls: 'gremlinamp-player'});
         const player = root.createEl('section', {cls: 'gremlinamp-panel'});
+        this.panel = player;
         const summary = player.createDiv({cls: 'gremlinamp-summary'});
         const artwork = summary.createDiv({cls: 'gremlinamp-art', attr: {'aria-hidden': 'true'}});
         setIcon(artwork, 'music-2');
@@ -104,7 +150,7 @@ class MusicView extends FileView {
         this.listTitle = listHeading.createEl('h3');
         this.scopes = listHeading.createDiv({cls: 'gremlinamp-scopes', attr: {role: 'group'}});
         this.fileButton = this.button(this.scopes, null, () => this.setMode('file'));
-        this.folderButton = this.button(this.scopes, null, () => this.setMode('folder'));
+        this.collectionButton = this.button(this.scopes, null, () => this.setMode(this.library ? 'library' : 'folder'));
         this.unknownTrack = tracks.createEl('label', {cls: 'gremlinamp-track-number'});
         this.trackLabel = this.unknownTrack.createSpan();
         this.trackInput = this.unknownTrack.createEl('input', {type: 'number', attr: {min: '1', max: '65535', step: '1'}});
@@ -115,6 +161,7 @@ class MusicView extends FileView {
                 this.trackInput.value = String(this.subsong - this.selection.first + 1);
             }
         });
+        this.emptyList = tracks.createEl('p', {cls: 'gremlinamp-empty', attr: {role: 'status'}});
         this.list = tracks.createEl('ol', {cls: 'gremlinamp-list'});
         this.localize();
     }
@@ -127,7 +174,7 @@ class MusicView extends FileView {
     }
 
     localize() {
-        if (!this.currentFile) return;
+        if (!this.list) return;
         const copy = this.plugin.copy;
         for (const [element, key] of [
             [this.previousButton, 'previous'], [this.backButton, 'back'], [this.forwardButton, 'forward'],
@@ -137,9 +184,9 @@ class MusicView extends FileView {
             element.setAttribute('aria-label', copy[key]);
             if (element.tagName === 'BUTTON') element.title = copy[key];
         }
-        this.listTitle.textContent = copy.tracklist;
+        this.listTitle.textContent = this.library ? copy.library : copy.tracklist;
         this.fileButton.textContent = copy.inFile;
-        this.folderButton.textContent = copy.inFolder;
+        this.collectionButton.textContent = this.library ? copy.inLibrary : copy.inFolder;
         this.trackLabel.textContent = copy.chooseTrack;
         this.renderTracklist();
         this.update();
@@ -153,37 +200,54 @@ class MusicView extends FileView {
     }
 
     renderTracklist() {
-        if (!this.currentFile || !this.list) return;
+        const file = this.currentFile;
+        if (!this.list || (!file && !this.library)) return;
+        const focusedEntry = this.entries?.[this.rows.indexOf(this.list.ownerDocument.activeElement)];
+        this.panel.hidden = this.scopes.hidden = !file;
         this.fileButton.setAttribute('aria-pressed', String(this.mode === 'file'));
-        this.folderButton.setAttribute('aria-pressed', String(this.mode === 'folder'));
-        const extension = this.currentFile.extension.toUpperCase();
-        const files = this.currentFile.parent?.children ?? [this.currentFile];
-        this.entries = this.mode === 'folder'
-            ? files.filter(file => file instanceof TFile && this.canAcceptExtension(file.extension))
-                .sort((a, b) => byFilename.compare(a.name, b.name))
-                .map(file => ({file, title: file.basename, extension: file.extension.toUpperCase()}))
-            : Array.from({length: this.selection.count ?? 0}, (_, index) => {
+        this.collectionButton.setAttribute('aria-pressed', String(this.mode !== 'file'));
+        if (this.mode === 'file') {
+            this.entries = Array.from({length: this.selection.count ?? 0}, (_, index) => {
                 const subsong = this.selection.first + index;
-                return {subsong, extension, title: this.subsongTitle(subsong),
+                return {subsong, extension: file.extension.toUpperCase(), title: this.subsongTitle(subsong),
                     duration: this.knownDuration(subsong)};
             });
+        } else {
+            const files = this.library ? this.plugin.getLibraryFiles()
+                : (file.parent?.children ?? [file]).filter(item => item instanceof TFile && this.canAcceptExtension(item.extension));
+            this.entries = files.sort((a, b) => byFilename.compare(a.name, b.name) || byFilename.compare(a.path, b.path))
+                .map(item => ({file: item, title: item.basename, extension: item.extension.toUpperCase(),
+                    duration: item === file ? this.knownDuration(this.subsong) : null}));
+        }
+        this.emptyList.hidden = this.mode !== 'library' || this.entries.length > 0;
+        this.emptyList.textContent = this.plugin.copy[this.plugin.settings.libraryFolders.length ? 'emptyLibrary' : 'noLibraryFolders'];
         this.unknownTrack.hidden = this.mode !== 'file' || this.selection.count !== null;
-        this.trackInput.value = String(this.subsong - this.selection.first + 1);
-        this.trackInput.max = String(this.selection.max ?? 65535);
+        if (file) {
+            this.trackInput.value = String(this.subsong - this.selection.first + 1);
+            this.trackInput.max = String(this.selection.max ?? 65535);
+        }
         this.list.empty();
         this.rows = this.entries.map((entry, index) => {
             const button = this.button(this.list.createEl('li'), null, () => void this.selectEntry(entry));
             button.createSpan({text: String(index + 1).padStart(2, '0'), cls: 'gremlinamp-row-index'});
-            button.createSpan({text: entry.title, cls: 'gremlinamp-row-title'});
+            const title = button.createSpan({text: entry.title, cls: 'gremlinamp-row-title'});
+            if (this.mode === 'library') {
+                title.createSpan({text: entry.file.parent?.path ?? '/', cls: 'gremlinamp-row-folder'});
+                button.title = entry.file.path;
+            }
             button.createSpan({text: entry.extension, cls: 'gremlinamp-row-format'});
             button.createSpan({text: entry.duration ? timeLabel(entry.duration) : '–:––', cls: 'gremlinamp-row-time'});
             return button;
         });
         this.updateSelection();
+        if (focusedEntry) {
+            const index = this.entries.findIndex(entry => entry.file === focusedEntry.file && entry.subsong === focusedEntry.subsong);
+            this.rows[index]?.focus({preventScroll: true});
+        }
     }
 
     get entryIndex() {
-        return this.entries?.findIndex(entry => this.mode === 'folder'
+        return this.entries?.findIndex(entry => this.mode !== 'file'
             ? entry.file === this.currentFile : entry.subsong === this.subsong) ?? -1;
     }
 
@@ -220,6 +284,10 @@ class MusicView extends FileView {
     async selectEntry(entry) {
         if (!entry.file) return this.selectSubsong(entry.subsong);
         if (entry.file === this.currentFile) return this.start();
+        if (this.library) {
+            this.loadTrack(entry.file);
+            return this.start();
+        }
         this.pendingFile = entry.file;
         try {
             await this.leaf.openFile(entry.file);
@@ -457,6 +525,27 @@ function timeLabel(seconds) {
     return Math.floor(whole / 60) + ':' + String(whole % 60).padStart(2, '0');
 }
 
+class LibraryFolderPicker extends FuzzySuggestModal {
+    constructor(plugin) {
+        super(plugin.app);
+        this.plugin = plugin;
+        this.setPlaceholder(plugin.copy.chooseFolder);
+        this.emptyStateText = plugin.copy.noMoreFolders;
+    }
+
+    getItems() {
+        const selected = this.plugin.settings.libraryFolders;
+        return this.app.vault.getAllFolders(true).filter(folder => !selected.includes(folder.path))
+            .sort((a, b) => byFilename.compare(a.path, b.path));
+    }
+
+    getItemText(folder) { return folder.path === '/' ? this.plugin.copy.vaultRoot : folder.path; }
+
+    onChooseItem(folder) {
+        void this.plugin.updateSettings(settings => ({libraryFolders: [...new Set([...settings.libraryFolders, folder.path])]}));
+    }
+}
+
 class GremlinAmpSettings extends PluginSettingTab {
     constructor(plugin) {
         super(plugin.app, plugin);
@@ -465,56 +554,175 @@ class GremlinAmpSettings extends PluginSettingTab {
 
     display() {
         this.containerEl.empty();
-        const setting = new Setting(this.containerEl).setName(this.plugin.copy.language);
-        setting.addDropdown(dropdown => dropdown
+        this.languageSetting = new Setting(this.containerEl).setName(this.plugin.copy.language);
+        this.languageSetting.addDropdown(dropdown => dropdown
             .addOption('ru', 'Русский').addOption('en', 'English')
             .setValue(this.plugin.language).onChange(async language => {
                 dropdown.setDisabled(true);
                 try {
-                    await this.plugin.setLanguage(language);
-                    setting.setName(this.plugin.copy.language);
-                } catch (error) {
-                    console.warn('GremlinAmp:', error);
-                    dropdown.setValue(this.plugin.language);
-                    new Notice(this.plugin.copy.saveFailed);
+                    await this.plugin.updateSettings(() => ({language}));
                 } finally {
+                    dropdown.setValue(this.plugin.language);
                     dropdown.setDisabled(false);
                 }
             }));
+        this.folderSettings = this.containerEl.createDiv();
+        this.refresh();
+    }
+
+    hide() {
+        this.languageSetting = null;
+        this.folderSettings = null;
+    }
+
+    refresh() {
+        if (!this.folderSettings) return;
+        const {copy, settings} = this.plugin;
+        this.languageSetting.setName(copy.language);
+        this.folderSettings.empty();
+        new Setting(this.folderSettings).setName(copy.libraryFolders).setDesc(copy.libraryFoldersDescription)
+            .addButton(button => button.setButtonText(copy.addFolder).onClick(() => new LibraryFolderPicker(this.plugin).open()));
+        for (const path of settings.libraryFolders) {
+            const setting = new Setting(this.folderSettings).setName(path === '/' ? copy.vaultRoot : path);
+            if (!(this.app.vault.getAbstractFileByPath(path) instanceof TFolder) && path !== '/')
+                setting.setDesc(copy.folderMissing);
+            setting.addExtraButton(button => button.setIcon('trash-2').setTooltip(copy.removeFolder).onClick(() =>
+                void this.plugin.updateSettings(current => ({libraryFolders: current.libraryFolders.filter(folder => folder !== path)}))));
+        }
     }
 }
 
 module.exports = class GremlinAmp extends Plugin {
     volume = 0.7;
-    language = 'en';
+    settings = {language: 'en', libraryFolders: []};
+    saving = Promise.resolve();
 
     async onload() {
         this.registerView(viewType, leaf => new MusicView(leaf, this));
+        this.registerView(libraryViewType, leaf => new MusicView(leaf, this, true));
         for (const extension of playerExtensions) {
             try { this.registerExtensions([extension], viewType); }
             catch (error) { console.warn('GremlinAmp could not register .' + extension, error); }
         }
         const fallback = (getLanguage?.() ?? globalThis.navigator?.language ?? 'en').toLowerCase().split('-')[0];
-        this.language = fallback === 'ru' ? 'ru' : 'en';
+        this.settings.language = fallback === 'ru' ? 'ru' : 'en';
         try {
             const data = await this.loadData();
-            if (data?.language === 'ru' || data?.language === 'en') this.language = data.language;
+            if (data?.language === 'ru' || data?.language === 'en') this.settings.language = data.language;
+            if (Array.isArray(data?.libraryFolders))
+                this.settings.libraryFolders = [...new Set(data.libraryFolders.filter(path => typeof path === 'string' && path))];
         } catch (error) { console.warn('GremlinAmp:', error); }
-        this.addSettingTab(new GremlinAmpSettings(this));
+        this.ribbon = this.addRibbonIcon('music', this.copy.openLibrary, () => this.openLibrary());
+        this.libraryCommand = this.addCommand({id: 'open-library', name: this.copy.openLibrary, callback: () => this.openLibrary()});
+        this.settingTab = new GremlinAmpSettings(this);
+        this.addSettingTab(this.settingTab);
+        const {vault} = this.app;
+        this.registerEvent(vault.on('create', file => this.onLibraryChange(file)));
+        this.registerEvent(vault.on('delete', file => this.onLibraryChange(file)));
+        this.registerEvent(vault.on('rename', (file, previousPath) => this.onLibraryChange(file, previousPath)));
         this.refreshLanguage();
     }
 
+    get language() { return this.settings.language; }
     get copy() { return strings[this.language]; }
 
-    async setLanguage(language) {
-        if (language === this.language || !Object.hasOwn(strings, language)) return;
-        await this.saveData({language});
-        this.language = language;
-        this.refreshLanguage();
+    updateSettings(change) {
+        this.saving = this.saving.then(async () => {
+            const previous = this.settings;
+            const patch = change(previous);
+            if (Object.entries(patch).every(([key, value]) => previous[key] === value)) return;
+            const updated = {...previous, ...patch};
+            await this.saveData(updated);
+            this.settings = updated;
+            if (updated.libraryFolders !== previous.libraryFolders) this.refreshLibrary();
+            if (updated.language !== previous.language) this.refreshLanguage();
+            this.settingTab.refresh();
+        }).catch(error => {
+            console.warn('GremlinAmp:', error);
+            new Notice(this.copy.saveFailed);
+        });
+        return this.saving;
     }
 
     refreshLanguage() {
-        for (const leaf of this.app.workspace.getLeavesOfType(viewType)) leaf.view.localize?.();
+        setTooltip(this.ribbon, this.copy.openLibrary, {placement: 'right'});
+        this.ribbon.setAttribute('aria-label', this.copy.openLibrary);
+        this.libraryCommand.name = this.manifest.name + ': ' + this.copy.openLibrary;
+        for (const type of [viewType, libraryViewType]) {
+            for (const leaf of this.app.workspace.getLeavesOfType(type)) leaf.view.localize?.();
+        }
+    }
+
+    openLibrary() {
+        if (this.openingLibrary) return this.openingLibrary;
+        const {workspace} = this.app;
+        this.openingLibrary = Promise.resolve().then(async () => {
+            let leaf = workspace.getLeavesOfType(libraryViewType)[0];
+            if (!leaf) {
+                leaf = workspace.getLeaf('tab');
+                await leaf.setViewState({type: libraryViewType, active: true});
+            }
+            await workspace.revealLeaf(leaf);
+        }).catch(error => {
+            console.warn('GremlinAmp:', error);
+            new Notice(this.copy.openLibraryError);
+        }).finally(() => { this.openingLibrary = null; });
+        return this.openingLibrary;
+    }
+
+    getLibraryFiles() {
+        const {vault} = this.app;
+        const stack = this.settings.libraryFolders.map(path => path === '/' ? vault.getRoot() : vault.getAbstractFileByPath(path))
+            .filter(item => item instanceof TFolder);
+        const seen = new Set();
+        const files = [];
+        while (stack.length) {
+            const item = stack.pop();
+            if (!item || seen.has(item.path)) continue;
+            seen.add(item.path);
+            if (item instanceof TFolder) {
+                for (const child of item.children) stack.push(child);
+            } else if (isLibraryTrack(item)) {
+                files.push(item);
+            }
+        }
+        return files;
+    }
+
+    onLibraryChange(file, previousPath) {
+        const {libraryFolders} = this.settings;
+        const path = file.path;
+        const folderChanged = file instanceof TFolder;
+        if (!folderChanged && !previousPath && !isLibraryTrack(file)) return;
+        if (folderChanged && previousPath) {
+            // Resolve against the latest settings, including any previous rename still being saved.
+            void this.updateSettings(settings => {
+                const folders = settings.libraryFolders;
+                if (!folders.some(folder => withinFolder(folder, previousPath))) return {};
+                return {libraryFolders: [...new Set(folders.map(folder => withinFolder(folder, previousPath)
+                    ? path + folder.slice(previousPath.length) : folder))]};
+            });
+        }
+        const touchesLibrary = changedPath => changedPath && libraryFolders.some(folder => withinFolder(changedPath, folder)
+            || folderChanged && withinFolder(folder, changedPath));
+        const selectedFileChanged = this.app.workspace.getLeavesOfType(libraryViewType).some(({view}) => {
+            const selected = view.currentFile;
+            return selected && (selected === file || folderChanged && withinFolder(selected.path, path));
+        });
+        if (touchesLibrary(path) || touchesLibrary(previousPath) || selectedFileChanged) {
+            this.refreshFolderSettings ||= folderChanged;
+            if (this.libraryRefresh !== undefined) return;
+            this.libraryRefresh = setTimeout(() => {
+                this.libraryRefresh = undefined;
+                this.refreshLibrary();
+                if (this.refreshFolderSettings) this.settingTab.refresh();
+                this.refreshFolderSettings = false;
+            }, 0);
+        }
+    }
+
+    refreshLibrary() {
+        for (const leaf of this.app.workspace.getLeavesOfType(libraryViewType)) leaf.view.refreshLibrary?.();
     }
 
     claim(view) {
@@ -525,9 +733,12 @@ module.exports = class GremlinAmp extends Plugin {
     }
 
     onunload() {
-        for (const leaf of this.app.workspace.getLeavesOfType(viewType)) {
-            leaf.view.stop?.();
-            leaf.detach();
+        clearTimeout(this.libraryRefresh);
+        for (const type of [viewType, libraryViewType]) {
+            for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+                leaf.view.stop?.();
+                leaf.detach();
+            }
         }
         this.active = null;
     }

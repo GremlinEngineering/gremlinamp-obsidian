@@ -5,7 +5,7 @@ const psfFamily = new Set([
 const extraFormats = ['stm', 'psf2', 'minipsf2', 'minips2', 'oga', 'aac'];
 const playerExtensions = [...new Set([...Object.values(DECODERS).flat(), ...extraFormats])].sort();
 const trackerFormats = new Set(['mod', 'xm', 'it', 's3m', 'mtm', 'stm']);
-const mediaFormats = new Set(['aac', 'oga']);
+const mediaFormats = new Set(['aac', 'oga', 'wav', 'mp3', 'ogg', 'flac', 'm4a']);
 const banks = {kss: 'mbk', kssx: 'mbk', kscc: 'mbk'};
 const capsuleRates = {st: 31400, iv: 44100, gbc: 32768, gba: 32768, jaguar: 48000,
     md: 44100, sv: 44100, vx: 187500, ws: 44100};

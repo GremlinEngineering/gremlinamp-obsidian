@@ -2,6 +2,12 @@
 
 An offline player for GremlinAmp's game music formats in Obsidian. Open a track from the file explorer or a normal wiki link such as `[[Music/intro.nsf]]`, then press **Play**. The player inherits the active Obsidian theme. **In file** shows subsongs, and **In folder** lists other supported music files in the same folder. Use the position slider or the 10-second buttons for tracks with a known duration after loading. Choose **English** or **Русский** in the GremlinAmp settings. Obsidian reads the original file from the vault. The decoder runs in a local Worker.
 
+## Music library
+
+In **Settings → GremlinAmp → Library folders**, use **Add folder** to choose one or more folders from the vault. The library includes subfolders and updates when items are added, moved, renamed, or removed. You can remove a folder from the library using the trash icon in settings. This removes the setting only.
+
+Click the music icon in Obsidian's ribbon or run **GremlinAmp: Open music library** from the command palette. The player opens in its own tab. Select a track to play it, or use **In file** to see its subsongs. The library also plays regular audio through Obsidian's media engine.
+
 ## Installing
 
 In BRAT, choose **Add beta plugin** and enter the URL of this repository. Choose the latest release. The release contains the standard `main.js`, `manifest.json` and `styles.css` assets. The complete WASM decoder set is embedded in `main.js`.

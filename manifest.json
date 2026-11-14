@@ -1,7 +1,7 @@
 {
   "id": "gremlinamp",
   "name": "GremlinAmp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "minAppVersion": "1.8.0",
   "description": "Play local tracker modules, console chiptunes and GremlinAmp music files directly from the vault.",
   "author": "GremlinEngineering",
